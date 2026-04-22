@@ -33,10 +33,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAccessControlFlags>()?;
     m.add_class::<PySecureEnclaveJWT>()?;
 
-    m.add("SecureEnclaveError", m.py().get_type_bound::<SecureEnclaveError>())?;
-    m.add("KeyNotFoundError",   m.py().get_type_bound::<KeyNotFoundError>())?;
-    m.add("AuthFailedError",    m.py().get_type_bound::<AuthFailedError>())?;
-    m.add("UserCancelledError", m.py().get_type_bound::<UserCancelledError>())?;
+    m.add("SecureEnclaveError", m.py().get_type::<SecureEnclaveError>())?;
+    m.add("KeyNotFoundError",   m.py().get_type::<KeyNotFoundError>())?;
+    m.add("AuthFailedError",    m.py().get_type::<AuthFailedError>())?;
+    m.add("UserCancelledError", m.py().get_type::<UserCancelledError>())?;
 
     Ok(())
 }

@@ -4,16 +4,16 @@ use secure_enclave_rs::SecureEnclaveJWT as RustJWT;
 use crate::{error::to_py_err, key::PySecureEnclaveKey};
 
 fn py_to_json(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
-    let json_mod = PyModule::import_bound(py, "json")?;
+    let json_mod = PyModule::import(py, "json")?;
     let json_str: String = json_mod.call_method1("dumps", (obj,))?.extract()?;
     serde_json::from_str(&json_str)
         .map_err(|e| PyValueError::new_err(format!("JSON serialization failed: {e}")))
 }
 
-fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<PyObject> {
-    let json_mod = PyModule::import_bound(py, "json")?;
-    let s = PyString::new_bound(py, &val.to_string());
-    Ok(json_mod.call_method1("loads", (s,))?.into())
+fn json_to_py<'py>(py: Python<'py>, val: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
+    let json_mod = PyModule::import(py, "json")?;
+    let s = PyString::new(py, &val.to_string());
+    json_mod.call_method1("loads", (s,))
 }
 
 /// Builder for ES256 JWTs signed by a Secure Enclave private key.
@@ -119,12 +119,12 @@ impl PySecureEnclaveJWT {
     ///
     /// :returns: ``(headers_dict, claims_dict)`` tuple.
     /// :raises SecureEnclaveError: If the signature is invalid or malformed.
-    pub fn verify_and_decode(
+    pub fn verify_and_decode<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         key: &PySecureEnclaveKey,
         token: &str,
-    ) -> PyResult<(PyObject, PyObject)> {
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
         let (headers, claims) = RustJWT::new(&key.inner)
             .map_err(to_py_err)?
             .verify_and_get_payload(token)

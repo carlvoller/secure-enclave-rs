@@ -19,6 +19,7 @@ pub struct PyAccessControlFlags {
 }
 
 #[pymethods]
+#[allow(non_snake_case)]
 impl PyAccessControlFlags {
     #[new]
     pub fn new(bits: u64) -> Self {
@@ -185,7 +186,7 @@ impl PySecureEnclaveKey {
     /// (``04 || X || Y``). Share these with a server during enrollment.
     pub fn public_key_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = self.inner.public_key_bytes().map_err(to_py_err)?;
-        Ok(PyBytes::new_bound(py, &bytes))
+        Ok(PyBytes::new(py, &bytes))
     }
 
     /// Sign ``data`` with ECDSA-SHA256 using this private key.
@@ -195,7 +196,7 @@ impl PySecureEnclaveKey {
     /// :raises UserCancelledError: If the user dismisses the prompt.
     pub fn sign<'py>(&self, py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
         let sig = self.inner.sign(data).map_err(to_py_err)?;
-        Ok(PyBytes::new_bound(py, &sig))
+        Ok(PyBytes::new(py, &sig))
     }
 
     /// Verify a DER-encoded ECDSA-SHA256 ``signature`` over ``data``.
@@ -210,7 +211,7 @@ impl PySecureEnclaveKey {
     /// Accepts both private and public key handles.
     pub fn encrypt<'py>(&self, py: Python<'py>, plaintext: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
         let ct = self.inner.encrypt(plaintext).map_err(to_py_err)?;
-        Ok(PyBytes::new_bound(py, &ct))
+        Ok(PyBytes::new(py, &ct))
     }
 
     /// Decrypt an ECIES ``ciphertext`` produced by :meth:`encrypt`.
@@ -218,7 +219,7 @@ impl PySecureEnclaveKey {
     /// :raises AuthFailedError: If the key requires authentication and it fails.
     pub fn decrypt<'py>(&self, py: Python<'py>, ciphertext: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
         let pt = self.inner.decrypt(ciphertext).map_err(to_py_err)?;
-        Ok(PyBytes::new_bound(py, &pt))
+        Ok(PyBytes::new(py, &pt))
     }
 
     /// Perform ECDH key exchange with a peer and return ``output_len`` bytes of
@@ -242,7 +243,7 @@ impl PySecureEnclaveKey {
             shared_info.unwrap_or(&[]),
         )
         .map_err(to_py_err)?;
-        Ok(PyBytes::new_bound(py, &secret))
+        Ok(PyBytes::new(py, &secret))
     }
 
     /// Trigger biometric or passcode authentication.
