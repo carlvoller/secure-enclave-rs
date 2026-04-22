@@ -1,0 +1,109 @@
+name: Python Release
+
+on:
+  push:
+    tags:
+      - 'py-v[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: macos-14
+            target: x86_64
+          - runner: macos-14
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out ../dist --find-interpreter
+          sccache: 'true'
+          working-directory: py-secure-enclave
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: whl-py-secure-enclave-macos-${{ matrix.platform.target }}
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out ../dist
+          working-directory: py-secure-enclave
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: py-secure-enclave-sdist
+          path: dist
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    # Only publish when a py-v* tag is pushed
+    if: startsWith(github.ref, 'refs/tags/py-v')
+    needs: [macos, sdist]
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#py-v}"
+          if [[ "$VERSION" == *"-"* ]]; then
+            IS_PRERELEASE=true
+          else
+            IS_PRERELEASE=false
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+      - uses: actions/download-artifact@v4
+      - name: Create GitHub release
+        id: github-release
+        uses: release-drafter/release-drafter@v6
+        with:
+          config-name: release-draft.yml
+          name: py-secure-enclave ${{ steps.version.outputs.version }}
+          tag: ${{ steps.version.outputs.tag }}
+          version: ${{ steps.version.outputs.version }}
+          disable-autolabeler: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload sdist to GitHub release
+        run: gh release upload $TAG $FILES --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          FILES: py-secure-enclave-sdist/*
+      - name: Publish GitHub release
+        run: gh release edit $TAG --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        with:
+          command: upload
+          args: --non-interactive --skip-existing whl-py-secure-enclave-*/*

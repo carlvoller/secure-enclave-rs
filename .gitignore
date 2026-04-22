@@ -1,0 +1,8 @@
+/target
+.venv
+py_secure_enclave/target
+py_secure_enclave/tests/bundle_app/build
+py_secure_enclave/tests/bundle_app/dist
+entitlements.plist
+*.pyc
+*.so

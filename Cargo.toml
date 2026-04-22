@@ -1,0 +1,17 @@
+[package]
+name = "secure-enclave-rs"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+bitflags = "2.11.1"
+serde_json = { version = "1.0.149", optional = true }
+
+[[example]]
+name = "jwt_assertion"
+required-features = ["jwt"]
+
+[features]
+all = ["jwt"]
+default = []
+jwt = ["dep:serde_json"]

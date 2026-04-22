@@ -1,0 +1,4 @@
+name-template: secure-enclave-rs $RESOLVED_VERSION
+tag-template: rs-$RESOLVED_VERSION
+tag-prefix: rs-
+template: Version $RESOLVED_VERSION of secure-enclave-rs is now available!

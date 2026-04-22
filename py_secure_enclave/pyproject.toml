@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "py-secure-enclave"
+version = "0.1.0"
+description = "Python bindings for macOS Secure Enclave operations"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Operating System :: MacOS",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.optional-dependencies]
+test = ["py2app"]
+
+[tool.maturin]
+module-name = "py_secure_enclave._native"
+features = ["pyo3/extension-module"]
