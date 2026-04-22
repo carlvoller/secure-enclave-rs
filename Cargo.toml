@@ -1,7 +1,11 @@
 [package]
 name = "secure-enclave-rs"
+description = "Safe Rust bindings to Apple's Secure Enclave"
 version = "1.0.0"
 edition = "2024"
+homepage = "https://github.com/carlvoller/excel-rs"
+repository = "https://github.com/carlvoller/excel-rs"
+license = "BSD-3-Clause"
 
 [dependencies]
 bitflags = "2.11.1"

@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "py-secure-enclave"
 version = "1.0.0"
-description = "Python bindings for macOS Secure Enclave operations"
+description = "Python bindings for macOS Secure Enclave"
 readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
