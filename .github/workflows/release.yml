@@ -16,9 +16,9 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: macos-14
+          - runner: macos-26
             target: x86_64
-          - runner: macos-14
+          - runner: macos-26
             target: aarch64
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out ../dist --find-interpreter
           sccache: 'true'
-          working-directory: py-secure-enclave
+          working-directory: py_secure_enclave
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -47,7 +47,7 @@ jobs:
         with:
           command: sdist
           args: --out ../dist
-          working-directory: py-secure-enclave
+          working-directory: py_secure_enclave
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
