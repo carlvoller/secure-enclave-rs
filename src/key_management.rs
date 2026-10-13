@@ -1,14 +1,25 @@
-use std::os::raw::c_void;
+use std::ptr::NonNull;
+
+use objc2_core_foundation::{
+    CFBoolean, CFData, CFError, CFNumber, CFOptionFlags, CFRetained, CFType,
+};
+use objc2_security::{
+    SecAccessControl, SecAccessControlCreateFlags, SecItemCopyMatching, SecItemDelete, SecKey,
+    kSecAttrAccessControl, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, kSecAttrApplicationTag,
+    kSecAttrIsPermanent, kSecAttrKeyClass, kSecAttrKeyClassPublic, kSecAttrKeySizeInBits,
+    kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom, kSecAttrTokenID,
+    kSecAttrTokenIDSecureEnclave, kSecClass, kSecClassKey, kSecMatchLimit, kSecMatchLimitOne,
+    kSecPrivateKeyAttrs, kSecReturnRef,
+};
 
 use crate::access_control::SecAccessControlFlags;
-use crate::cf::{self, OwnedData, OwnedDict, OwnedNumber};
+use crate::cf;
 use crate::error::{Error, Result};
-use crate::security::{self, types::*};
 
 /// A handle to a Secure Enclave key.
 ///
 /// Adops a Secure Enclave Key reference.
-/// When dropped, CFRelease is called on the reference to free memory
+/// When dropped, the reference is released to free memory
 ///
 /// Obtain a handle via [`SecureEnclaveKey::generate`] (new key) or
 /// [`SecureEnclaveKey::get`] (existing keychain entry). Reconstruct a public
@@ -16,7 +27,7 @@ use crate::security::{self, types::*};
 pub struct SecureEnclaveKey {
     tag: Vec<u8>, // Owned copy of the key tag
 
-    pub(crate) key_ref: SecKeyRef,
+    pub(crate) key_ref: CFRetained<SecKey>,
     pub(crate) is_public_key: bool,
 }
 
@@ -38,17 +49,9 @@ pub struct SecureEnclaveKeyOptions<'a> {
 // unsafe impl Send for SecuredEnclaveKey {}
 // unsafe impl Sync for SecuredEnclaveKey {}
 
-impl Drop for SecureEnclaveKey {
-    fn drop(&mut self) {
-        if !self.key_ref.is_null() {
-            unsafe { security::CFRelease(self.key_ref as CFTypeRef) }
-        }
-    }
-}
-
 impl SecureEnclaveKey {
-    pub(crate) fn raw(&self) -> SecKeyRef {
-        self.key_ref
+    pub(crate) fn raw(&self) -> &SecKey {
+        &self.key_ref
     }
 
     /// Return the public-key counterpart of this key.
@@ -60,12 +63,9 @@ impl SecureEnclaveKey {
             ));
         }
 
-        let ptr = unsafe { security::SecKeyCopyPublicKey(self.key_ref) };
-        if ptr.is_null() {
-            return Err(Error::NullResult);
-        }
+        let key_ref = unsafe { self.key_ref.public_key() }.ok_or(Error::NullResult)?;
         Ok(SecureEnclaveKey {
-            key_ref: ptr,
+            key_ref,
             tag: self.tag.clone(),
             is_public_key: true,
         })
@@ -79,59 +79,32 @@ impl SecureEnclaveKey {
     /// export it as bytes for server registration.
     pub fn generate(opts: &SecureEnclaveKeyOptions) -> Result<Self> {
         let acl = create_access_control(opts.access_flags)?;
-        let tag = OwnedData::new(opts.tag);
-        let key_size = OwnedNumber::from_i32(256);
+        let tag = CFData::from_bytes(opts.tag);
+        let key_size = CFNumber::new_i32(256);
 
         // Inner dict: private key attributes (tag, permanence, access control).
         let private_attrs = unsafe {
-            OwnedDict::new(&[
-                (
-                    security::kSecAttrIsPermanent as *const c_void,
-                    if opts.permanent {
-                        security::kCFBooleanTrue as *const c_void
-                    } else {
-                        security::kCFBooleanFalse as *const c_void
-                    },
-                ),
-                (
-                    security::kSecAttrApplicationTag as *const c_void,
-                    tag.as_raw() as *const c_void,
-                ),
-                (
-                    security::kSecAttrAccessControl as *const c_void,
-                    acl.0 as *const c_void,
-                ),
+            cf::dict(&[
+                (kSecAttrIsPermanent, CFBoolean::new(opts.permanent)),
+                (kSecAttrApplicationTag, &tag),
+                (kSecAttrAccessControl, &acl),
             ])
         };
 
         // Outer dict: key type, size, token (SE), and the private key sub-dict.
         let params = unsafe {
-            OwnedDict::new(&[
-                (
-                    security::kSecAttrKeyType as *const c_void,
-                    security::kSecAttrKeyTypeECSECPrimeRandom as *const c_void,
-                ),
-                (
-                    security::kSecAttrKeySizeInBits as *const c_void,
-                    key_size.as_raw() as *const c_void,
-                ),
-                (
-                    security::kSecAttrTokenID as *const c_void,
-                    security::kSecAttrTokenIDSecureEnclave as *const c_void,
-                ),
-                (
-                    security::kSecPrivateKeyAttrs as *const c_void,
-                    private_attrs.as_raw() as *const c_void,
-                ),
+            cf::dict(&[
+                (kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom),
+                (kSecAttrKeySizeInBits, &key_size),
+                (kSecAttrTokenID, kSecAttrTokenIDSecureEnclave),
+                (kSecPrivateKeyAttrs, private_attrs.as_opaque()),
             ])
         };
 
-        let mut err: CFErrorRef = std::ptr::null_mut();
-        let key_ref = unsafe { security::SecKeyCreateRandomKey(params.as_raw(), &mut err) };
+        let mut err: *mut CFError = std::ptr::null_mut();
+        let key_ref = unsafe { SecKey::new_random_key(params.as_opaque(), &mut err) };
         unsafe { cf::consume_cf_error(err) }?;
-        if key_ref.is_null() {
-            return Err(Error::NullResult);
-        }
+        let key_ref = key_ref.ok_or(Error::NullResult)?;
         Ok(Self {
             key_ref,
             tag: opts.tag.to_vec(),
@@ -143,42 +116,28 @@ impl SecureEnclaveKey {
     ///
     /// Returns `Error::NotFound` if no matching key exists.
     pub fn get(tag: &[u8]) -> Result<Self> {
-        let tag_data = OwnedData::new(tag);
+        let tag_data = CFData::from_bytes(tag);
 
         let query = unsafe {
-            OwnedDict::new(&[
-                (
-                    security::kSecClass as *const c_void,
-                    security::kSecClassKey as *const c_void,
-                ),
-                (
-                    security::kSecAttrKeyType as *const c_void,
-                    security::kSecAttrKeyTypeECSECPrimeRandom as *const c_void,
-                ),
-                (
-                    security::kSecAttrApplicationTag as *const c_void,
-                    tag_data.as_raw() as *const c_void,
-                ),
-                (
-                    security::kSecReturnRef as *const c_void,
-                    security::kCFBooleanTrue as *const c_void,
-                ),
-                (
-                    security::kSecMatchLimit as *const c_void,
-                    security::kSecMatchLimitOne as *const c_void,
-                ),
+            cf::dict(&[
+                (kSecClass, kSecClassKey),
+                (kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom),
+                (kSecAttrApplicationTag, &tag_data),
+                (kSecReturnRef, CFBoolean::new(true)),
+                (kSecMatchLimit, kSecMatchLimitOne),
             ])
         };
 
-        let mut result: CFTypeRef = std::ptr::null();
-        let status = unsafe { security::SecItemCopyMatching(query.as_raw(), &mut result) };
+        let mut result: *const CFType = std::ptr::null();
+        let status = unsafe { SecItemCopyMatching(query.as_opaque(), &mut result) };
         cf::check_os_status(status)?;
-        if result.is_null() {
-            return Err(Error::NullResult);
-        }
+        let result = NonNull::new(result.cast_mut()).ok_or(Error::NullResult)?;
         // SecItemCopyMatching with kSecReturnRef gives us a CoreFoundation reference i'm responsible for.
+        let key_ref = unsafe { CFRetained::from_raw(result) }
+            .downcast::<SecKey>()
+            .map_err(|_| Error::NullResult)?;
         Ok(Self {
-            key_ref: result as SecKeyRef,
+            key_ref,
             tag: tag.to_vec(),
             is_public_key: false,
         })
@@ -196,26 +155,17 @@ impl SecureEnclaveKey {
     ///
     /// Returns [`Error::NotFound`] if no matching entry exists.
     pub fn remove_by_tag(tag: &[u8]) -> Result<()> {
-        let tag_data = OwnedData::new(tag);
+        let tag_data = CFData::from_bytes(tag);
 
         let query = unsafe {
-            OwnedDict::new(&[
-                (
-                    security::kSecClass as *const c_void,
-                    security::kSecClassKey as *const c_void,
-                ),
-                (
-                    security::kSecAttrKeyType as *const c_void,
-                    security::kSecAttrKeyTypeECSECPrimeRandom as *const c_void,
-                ),
-                (
-                    security::kSecAttrApplicationTag as *const c_void,
-                    tag_data.as_raw() as *const c_void,
-                ),
+            cf::dict(&[
+                (kSecClass, kSecClassKey),
+                (kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom),
+                (kSecAttrApplicationTag, &tag_data),
             ])
         };
 
-        let status = unsafe { security::SecItemDelete(query.as_raw()) };
+        let status = unsafe { SecItemDelete(query.as_opaque()) };
         cf::check_os_status(status)
     }
 
@@ -230,14 +180,10 @@ impl SecureEnclaveKey {
             &self.public_key()?
         };
 
-        let mut err: CFErrorRef = std::ptr::null_mut();
-        let data_ref =
-            unsafe { security::SecKeyCopyExternalRepresentation(pub_key.raw(), &mut err) };
+        let mut err: *mut CFError = std::ptr::null_mut();
+        let data_ref = unsafe { pub_key.raw().external_representation(&mut err) };
         unsafe { cf::consume_cf_error(err) }?;
-        if data_ref.is_null() {
-            return Err(Error::NullResult);
-        }
-        Ok(OwnedData::from_raw(data_ref).to_vec())
+        Ok(data_ref.ok_or(Error::NullResult)?.to_vec())
     }
 
     /// Trigger biometric or passcode authentication by signing an internal
@@ -264,31 +210,23 @@ impl SecureEnclaveKey {
     }
 }
 
-pub(crate) struct SecAccessControl(pub(crate) SecAccessControlRef);
-
-impl Drop for SecAccessControl {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe { security::CFRelease(self.0 as CFTypeRef) }
-        }
-    }
-}
-
-pub(crate) fn create_access_control(flags: SecAccessControlFlags) -> Result<SecAccessControl> {
-    let mut err: CFErrorRef = std::ptr::null_mut();
+pub(crate) fn create_access_control(
+    flags: SecAccessControlFlags,
+) -> Result<CFRetained<SecAccessControl>> {
+    let flags = SecAccessControlCreateFlags::from_bits_retain(
+        (flags | SecAccessControlFlags::PRIVATE_KEY_USAGE).bits() as CFOptionFlags,
+    );
+    let mut err: *mut CFError = std::ptr::null_mut();
     let acl = unsafe {
-        security::SecAccessControlCreateWithFlags(
-            security::kCFAllocatorDefault,
-            security::kSecAttrAccessibleWhenUnlockedThisDeviceOnly as CFTypeRef,
-            (flags | SecAccessControlFlags::PRIVATE_KEY_USAGE).bits(),
+        SecAccessControl::with_flags(
+            None,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            flags,
             &mut err,
         )
     };
     unsafe { cf::consume_cf_error(err) }?;
-    if acl.is_null() {
-        return Err(Error::NullResult);
-    }
-    Ok(SecAccessControl(acl))
+    acl.ok_or(Error::NullResult)
 }
 
 pub(crate) fn public_key_from_bytes(bytes: &[u8]) -> Result<SecureEnclaveKey> {
@@ -298,33 +236,21 @@ pub(crate) fn public_key_from_bytes(bytes: &[u8]) -> Result<SecureEnclaveKey> {
         ));
     }
 
-    let key_data = OwnedData::new(bytes);
-    let key_size = OwnedNumber::from_i32(256);
+    let key_data = CFData::from_bytes(bytes);
+    let key_size = CFNumber::new_i32(256);
 
     let attrs = unsafe {
-        OwnedDict::new(&[
-            (
-                security::kSecAttrKeyType as *const c_void,
-                security::kSecAttrKeyTypeECSECPrimeRandom as *const c_void,
-            ),
-            (
-                security::kSecAttrKeyClass as *const c_void,
-                security::kSecAttrKeyClassPublic as *const c_void,
-            ),
-            (
-                security::kSecAttrKeySizeInBits as *const c_void,
-                key_size.as_raw() as *const c_void,
-            ),
+        cf::dict(&[
+            (kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom),
+            (kSecAttrKeyClass, kSecAttrKeyClassPublic),
+            (kSecAttrKeySizeInBits, &key_size),
         ])
     };
 
-    let mut err: CFErrorRef = std::ptr::null_mut();
-    let key_ref =
-        unsafe { security::SecKeyCreateWithData(key_data.as_raw(), attrs.as_raw(), &mut err) };
+    let mut err: *mut CFError = std::ptr::null_mut();
+    let key_ref = unsafe { SecKey::with_data(&key_data, attrs.as_opaque(), &mut err) };
     unsafe { cf::consume_cf_error(err) }?;
-    if key_ref.is_null() {
-        return Err(Error::NullResult);
-    }
+    let key_ref = key_ref.ok_or(Error::NullResult)?;
     Ok(SecureEnclaveKey {
         key_ref,
         tag: Vec::new(),

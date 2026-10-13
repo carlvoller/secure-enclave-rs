@@ -9,6 +9,22 @@ license = "BSD-3-Clause"
 
 [dependencies]
 bitflags = "2.11.1"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CFBase",
+    "CFData",
+    "CFDictionary",
+    "CFError",
+    "CFNumber",
+    "CFString",
+] }
+objc2-security = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "SecAccessControl",
+    "SecBase",
+    "SecItem",
+    "SecKey",
+] }
 serde_json = { version = "1.0.149", optional = true }
 
 [[example]]

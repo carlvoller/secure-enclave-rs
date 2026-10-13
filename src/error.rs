@@ -2,11 +2,6 @@ use std::fmt;
 
 pub type OsStatus = i32;
 
-pub const ERR_SEC_ITEM_NOT_FOUND: OsStatus = -25300;
-pub const ERR_SEC_AUTH_FAILED: OsStatus = -25293;
-pub const ERR_SEC_USER_CANCELED: OsStatus = -128;
-pub const ERR_SEC_VERIFY_FAILED: OsStatus = -67808;
-
 #[derive(Debug)]
 pub enum Error {
     /// Non-zero `OSStatus` returned by the Security framework.
@@ -51,7 +46,7 @@ impl fmt::Display for Error {
             Error::UserCancelled => write!(f, "user cancelled the request"),
             Error::AuthFailed => write!(f, "user failed to authenticate"),
             Error::InvalidInput(msg) => write!(f, "invalid input: {}", msg),
-            
+
             #[cfg(feature = "jwt")]
             Error::InvalidJWTClaims => write!(f, "invalid jwt claims supplied"),
             #[cfg(feature = "jwt")]

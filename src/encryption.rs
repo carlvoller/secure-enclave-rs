@@ -1,7 +1,9 @@
 use crate::SecureEnclaveKey;
-use crate::cf::{self, OwnedData};
+use objc2_core_foundation::{CFData, CFError};
+use objc2_security::kSecKeyAlgorithmECIESEncryptionStandardVariableIVX963SHA256AESGCM;
+
+use crate::cf;
 use crate::error::{Error, Result};
-use crate::security::{self, types::*};
 
 impl SecureEnclaveKey {
     /// Encrypt `plaintext`.
@@ -18,22 +20,18 @@ impl SecureEnclaveKey {
             &self.public_key()?
         };
 
-        let plain_data = OwnedData::new(plaintext);
-        let mut err: CFErrorRef = std::ptr::null_mut();
+        let plain_data = CFData::from_bytes(plaintext);
+        let mut err: *mut CFError = std::ptr::null_mut();
 
-        let cipher_ref = unsafe {
-            security::SecKeyCreateEncryptedData(
-                key.raw(),
-                security::kSecKeyAlgorithmECIESEncryptionStandardVariableIVX963SHA256AESGCM,
-                plain_data.as_raw(),
+        let cipher_data = unsafe {
+            key.raw().encrypted_data(
+                kSecKeyAlgorithmECIESEncryptionStandardVariableIVX963SHA256AESGCM,
+                &plain_data,
                 &mut err,
             )
         };
         unsafe { cf::consume_cf_error(err) }?;
-        if cipher_ref.is_null() {
-            return Err(Error::NullResult);
-        }
-        Ok(OwnedData::from_raw(cipher_ref).to_vec())
+        Ok(cipher_data.ok_or(Error::NullResult)?.to_vec())
     }
 
     /// Decrypt `ciphertext`.
@@ -49,21 +47,17 @@ impl SecureEnclaveKey {
             ));
         }
 
-        let cipher_data = OwnedData::new(ciphertext);
-        let mut err: CFErrorRef = std::ptr::null_mut();
+        let cipher_data = CFData::from_bytes(ciphertext);
+        let mut err: *mut CFError = std::ptr::null_mut();
 
-        let plain_ref = unsafe {
-            security::SecKeyCreateDecryptedData(
-                self.raw(),
-                security::kSecKeyAlgorithmECIESEncryptionStandardVariableIVX963SHA256AESGCM,
-                cipher_data.as_raw(),
+        let plain_data = unsafe {
+            self.raw().decrypted_data(
+                kSecKeyAlgorithmECIESEncryptionStandardVariableIVX963SHA256AESGCM,
+                &cipher_data,
                 &mut err,
             )
         };
         unsafe { cf::consume_cf_error(err) }?;
-        if plain_ref.is_null() {
-            return Err(Error::NullResult);
-        }
-        Ok(OwnedData::from_raw(plain_ref).to_vec())
+        Ok(plain_data.ok_or(Error::NullResult)?.to_vec())
     }
 }

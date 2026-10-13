@@ -1,7 +1,9 @@
-use crate::cf::{self, OwnedData};
-use crate::error::{Error, OsStatus, Result, ERR_SEC_VERIFY_FAILED};
+use objc2_core_foundation::{CFData, CFError};
+use objc2_security::{errSecVerifyFailed, kSecKeyAlgorithmECDSASignatureMessageX962SHA256};
+
+use crate::cf;
+use crate::error::{Error, OsStatus, Result};
 use crate::key_management::SecureEnclaveKey;
-use crate::security::{self, types::*};
 
 impl SecureEnclaveKey {
     /// Sign `data` using ECDSA-SHA256.
@@ -23,22 +25,18 @@ impl SecureEnclaveKey {
             ));
         }
 
-        let data_ref = OwnedData::new(data);
-        let mut err: CFErrorRef = std::ptr::null_mut();
+        let data_ref = CFData::from_bytes(data);
+        let mut err: *mut CFError = std::ptr::null_mut();
 
         let sig_ref = unsafe {
-            security::SecKeyCreateSignature(
-                self.raw(),
-                security::kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
-                data_ref.as_raw(),
+            self.raw().signature(
+                kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+                &data_ref,
                 &mut err,
             )
         };
         unsafe { cf::consume_cf_error(err) }?;
-        if sig_ref.is_null() {
-            return Err(Error::NullResult);
-        }
-        Ok(OwnedData::from_raw(sig_ref).to_vec())
+        Ok(sig_ref.ok_or(Error::NullResult)?.to_vec())
     }
 
     /// Verify that `signature` over `data` is valid.
@@ -56,16 +54,15 @@ impl SecureEnclaveKey {
             &self.public_key()?
         };
 
-        let data_ref = OwnedData::new(data);
-        let sig_ref = OwnedData::new(signature);
-        let mut err: CFErrorRef = std::ptr::null_mut();
+        let data_ref = CFData::from_bytes(data);
+        let sig_ref = CFData::from_bytes(signature);
+        let mut err: *mut CFError = std::ptr::null_mut();
 
         let ok = unsafe {
-            security::SecKeyVerifySignature(
-                key.raw(),
-                security::kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
-                data_ref.as_raw(),
-                sig_ref.as_raw(),
+            key.raw().verify_signature(
+                kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+                &data_ref,
+                &sig_ref,
                 &mut err,
             )
         };
@@ -74,15 +71,14 @@ impl SecureEnclaveKey {
         // by setting err to errSecVerifyFailed; only framework-level problems
         // should propagate as Err. Inline the error handling so we can peek
         // at the code before consuming the CFError.
-        if !err.is_null() {
-            let code = unsafe { security::CFErrorGetCode(err) as OsStatus };
-            unsafe { security::CFRelease(err as CFTypeRef) };
-            if code == ERR_SEC_VERIFY_FAILED {
+        if let Some(err) = unsafe { cf::take_cf_error(err) } {
+            let code = err.code() as OsStatus;
+            if code == errSecVerifyFailed {
                 return Ok(false);
             }
             return Err(Error::Os(code));
         }
 
-        Ok(ok != 0)
+        Ok(ok)
     }
 }
